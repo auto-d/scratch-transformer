@@ -1,5 +1,10 @@
 import numpy as np 
 import argparse
+from transformers import AutoTokenizer, AutoModel
+
+def log_if(s, condition): 
+    if condition: 
+        print(s)
 
 def matmul(a,b): 
     """
@@ -15,7 +20,15 @@ def tokenize(a, verbose):
     """
     Decompose our language input into suitable number of tokens 
     """
-    pass 
+    tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-uncased")
+    ids = tokenizer.encode(a) 
+
+    log_if(f" → One string of {len(a)} characters tokenized", verbose) 
+
+    literals = [x for x in zip(ids[0:5], tokenizer.convert_ids_to_tokens(ids[0:5]))]
+    log_if(f" → Resulting sequence is {len(ids)} tokens (first five ids/tokens: {ids[0:5]})", verbose)
+
+    return ids
 
 def detokenize(a, verbose): 
     """
@@ -23,10 +36,20 @@ def detokenize(a, verbose):
     """
     pass 
 
-def embed(a, verbose): 
+def embed(ids, verbose): 
     """
-    Doc1string for embed
+    Leverage pre-trained word embeddings to map our tokens into a high-D space
     """
+
+    # TODO: this is going to have to be a tensor I suppose, uis this actually doing a forward pass vs a lookup?
+    model = AutoModel.from_pretrained("google-bert/bert-base-uncased")
+    embeddings = model.get_input_embeddings()
+    sequence = [embeddings(x) for x in ids]
+
+    log_if(f" → Embedded {len(ids)}")
+    log_if(f" → New sequence is size {len(sequence)}, {len(embeddings.weight[0])}")
+
+    return sequence
 
 def unembed(a, verbose): 
     """
@@ -85,6 +108,8 @@ def forward(tokens, verbose=False):
     """
     
     # Map tokens into a richer space, imparting learned semantics on the way 
+    # Note we could learn the embeddings here from scratch, bootstrap with an existing 
+    # network or just do a lookup on embeddings using prior results.
     seq = embed(tokens, verbose)
     
     # Encode the position information and concatenate to ensure token position is 
@@ -125,8 +150,10 @@ def main():
     parser.add_argument("text", type=str, help="An input string to process")
     args = parser.parse_args()
 
+    log_if(f"Starting transformer emulator on sequence '{args.text[0:10]}' ...", args.verbose)
+
     tokens = tokenize(args.text, args.verbose)   
-    probs = forward(args.verbose) 
+    probs = forward(tokens, args.verbose) 
     
     # Greedily grab the highest probability token and report it 
     # Note: This is where we could introduce important features like... 
