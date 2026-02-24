@@ -3,9 +3,14 @@ import argparse
 import torch 
 from transformers import AutoTokenizer, AutoModel
 
+
+
 def log_if(s, condition): 
     if condition: 
         print(s)
+
+def dot(a,b): 
+    return np.dot(a,b) 
 
 def matmul(a,b): 
     """
@@ -15,7 +20,7 @@ def matmul(a,b):
     :param a: Description
     :param b: Description
     """
-    pass
+    return np.matmul(a,b)
 
 def tokenize(a, verbose): 
     """
@@ -85,12 +90,32 @@ def encode_position(a, verbose):
 
     return a + position 
 
-def self_attention(a, verbose): 
+def self_attention(weights, a, verbose, Q=0, K=1, V=2): 
     """
-    Perform self-attention on the provided matrix, returning the output
+    Perform self-attention on the provided sequence using the given weights for Q, K, V 
+    projections, returning the output
     """
-    pass 
+    # For every head, project through our Q, K weights to get to d_head, then
+    # apply the dot product to arrive at a similarity measure... this scalar tells us 
+    # the degree to which our projections are aligned in d_head space. Here we implement
+    # this as a matrix multiplication (which is just a composition of dot products on 
+    # corresponding vectors)
+    
+    # E.g. (n, 768) * (768, 64) -> (n, 64)
+    q = matmul(a, weights[Q])
+    k = matmul(a, weights[K])
+    
+    # E.g. (n, 64) (n, 64)T -> (64, 64)
+    s = matmul(q, k.T)
+    
+    # Now softmax those scores to give us a normalized factor, multiply with the value 
+    # vector to amplify or suppress,  then add the results to get our new residual stream z
+    a_soft = softmax(s)
+    v = matmul(a, weights[V])
+    z = v * a_soft
 
+    return z 
+    
 def softmax(logits, verbose): 
     pass 
 
@@ -128,15 +153,31 @@ def forward(tokens, verbose=False):
     # network or just do a lookup on embeddings using prior results.
     seq = embed(tokens, verbose)
     
+    # Our model dimension is the embedding dimension, we could project up or down, but 
+    # unclear what value this would add, up would sparsify semantics and down would compress
+    d_model = seq.shape[0]
+    
+    # Our head dimension is a function of how many heads we're operating on the sequence 
+    # TODO: propagate through the toy here and split data among heads 
+    heads = 1
+    d_head = d_model/heads 
+    
     # Encode the position information and concatenate to ensure token position is 
     # captured and made available to the downstream learning process
     residual = encode_position(seq, verbose)
 
-    # Perform 
-    attn = self_attention(residual, verbose)
+    # Initialize random weights to emulate learned weights
+    attn_weights = np.random(heads, 3, d_model, d_head)
+
+    z = None
+    
+    for i in range(0, heads): 
+        z = self_attention(attn_weights, residual, verbose)
+
+        # TODO: concatenate Zs
 
     # Join residual and attention outputs
-    residual = add(residual, attn, verbose)
+    residual = add(residual, z, verbose)
 
     # Normalize
     residual = norm(residual, verbose)
