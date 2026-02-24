@@ -29,10 +29,10 @@ def tokenize(a, verbose):
     tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-uncased")
     ids = tokenizer.encode(a) 
 
-    log_if(f" → One string of {len(a)} characters tokenized", verbose) 
+    log_if(f" ▶ Tokenizing {len(a)} characters ", verbose) 
 
     literals = [x for x in zip(ids[0:5], tokenizer.convert_ids_to_tokens(ids[0:5]))]
-    log_if(f" → Resulting sequence is {len(ids)} tokens (first five ids/tokens: {literals[0:5]})", verbose)
+    log_if(f"  → Resulting sequence is {len(ids)} tokens (first five ids/tokens: {literals[0:5]})", verbose)
 
     return ids
 
@@ -46,13 +46,15 @@ def embed(ids, verbose):
     """
     Leverage pre-trained word embeddings to map our tokens into a high-D space
     """
+    
+    log_if(f" ▶ Embedding sequence of {len(ids)} characters.. ", verbose) 
 
     model = AutoModel.from_pretrained("google-bert/bert-base-uncased")
     embeddings = model.get_input_embeddings()
     sequence = [embeddings.weight.H[:,x].detach().numpy().copy() for x in ids]
 
-    log_if(f" → Embedded {len(ids)}", verbose)
-    log_if(f" → New sequence is size {len(sequence)}, {len(embeddings.weight[0])}", verbose)
+    log_if(f"  → Embedded {len(ids)}", verbose)
+    log_if(f"  → New sequence is size {len(sequence)}, {len(embeddings.weight[0])}", verbose)
 
     return np.array(sequence)
 
@@ -72,7 +74,9 @@ def encode_position(a, verbose):
     Encode the order of each element and add it to the respective token representation
     in the sequence (which must be a numpy array)
     """
-    
+            
+    log_if(f" ▶ Encoding position into sequence of {len(a)}... ", verbose) 
+
     # Load the BERT model and leverage its fixed positional encodings, note this 
     # has a limit 512 encodings by default, which our toy shouldn't exceed
     if len(a) > 512: 
@@ -80,17 +84,19 @@ def encode_position(a, verbose):
 
     model = AutoModel.from_pretrained("google-bert/bert-base-uncased")
 
+    log_if(f"  → Retrieving fixed position embeddings...", verbose)
+
     # Extract a suitable number of encodings and add to our source vector, 
     # detaching from the pytorch graph to avoid any gradient baggage
     ix = torch.tensor(range(0, len(a)), dtype=torch.int32)
     position = model.embeddings.position_embeddings(ix)
     position = position.detach().numpy().copy()
 
-    log_if(f" → Adding absolute positional encoding ({position.shape}) to sequence ({a.shape}) ", verbose)
+    log_if(f"  → Adding absolute positional encoding ({position.shape}) to sequence ({a.shape}) ", verbose)
 
     return a + position 
 
-def self_attention(weights, a, verbose, Q=0, K=1, V=2): 
+def self_attention(weights, r, verbose, Q=0, K=1, V=2): 
     """
     Perform self-attention on the provided sequence using the given weights for Q, K, V 
     projections, returning the output
@@ -101,28 +107,55 @@ def self_attention(weights, a, verbose, Q=0, K=1, V=2):
     # this as a matrix multiplication (which is just a composition of dot products on 
     # corresponding vectors)
     
+    log_if(f" ▶ Applying self attentiong to residual matrix (r@{r.shape})", verbose)
+    log_if(f"  → Projecting residual through Q, K (q@{weights[Q].shape} k@{weights[K].shape})", verbose)
+
     # E.g. (n, 768) * (768, 64) -> (n, 64)
-    q = matmul(a, weights[Q])
-    k = matmul(a, weights[K])
-    
+    q = matmul(r, weights[Q])
+    k = matmul(r, weights[K])
+    log_if(f"  → q@{q.shape}, k@{k.shape}", verbose)
+
     # E.g. (n, 64) (n, 64)T -> (64, 64)
     s = matmul(q, k.T)
+    log_if(f"  → Computed raw attention scores on q,k (s@{s.shape})", verbose)
     
-    # Now softmax those scores to give us a normalized factor, multiply with the value 
-    # vector to amplify or suppress,  then add the results to get our new residual stream z
-    a_soft = softmax(s)
-    v = matmul(a, weights[V])
-    z = v * a_soft
+    # Now softmax those scores to give us a normalized factor (actually a probability 
+    # simplex - all values sum to 1) that preserves relative order and is also trivially
+    # differentiable. 
+    a = softmax(s)
+
+    # Scale our v vector, amplifying or suppressing by the corresponding score,  then 
+    # add the results to get our new residual stream z
+    log_if(f"  → Scaling v@{v.shape} by attention scores...", verbose)
+    v = matmul(r, weights[V])
+
+    log_if(f"  → Attention head output  z@{z.shape}", verbose)
+    z = v * a
 
     return z 
     
-def softmax(logits, verbose): 
-    pass 
+def softmax(logits, verbose=True): 
+    """
+    Poor-man's softmax that presumes a 2d matrix with the values to operate on in the last 
+    dimension. 
+    
+    :param logits: Description
+    :param verbose: Description
+    """
+    if len(logits.shape) != 2: 
+        raise ValueError(f"Expected 2d matrix, got {len(logits.shape)}")
+    
+    out = np.zeros(logits.shape)
+    for i in range(0, logits.shape[0]): 
+        e_x = np.e ** logits[i]
+        out[i] = e_x/np.sum(e_x)
+    
+    return out
 
 def norm(a, verbose): 
     pass 
 
-def fc(a, verbose): 
+def fc(a, verbose=True): 
     pass 
 
 def forward(tokens, verbose=False):
@@ -155,26 +188,19 @@ def forward(tokens, verbose=False):
     
     # Our model dimension is the embedding dimension, we could project up or down, but 
     # unclear what value this would add, up would sparsify semantics and down would compress
-    d_model = seq.shape[0]
-    
-    # Our head dimension is a function of how many heads we're operating on the sequence 
-    # TODO: propagate through the toy here and split data among heads 
-    heads = 1
-    d_head = d_model/heads 
+    d_model = seq.shape[1]
     
     # Encode the position information and concatenate to ensure token position is 
     # captured and made available to the downstream learning process
     residual = encode_position(seq, verbose)
 
     # Initialize random weights to emulate learned weights
-    attn_weights = np.random(heads, 3, d_model, d_head)
+    # NOTE: The convention has become multiple attention heads to improve the richness
+    # of learned relationships and mappings. For our toy we have just a single 
+    # attention head of d_model size
+    attn_weights = np.random.rand(3, d_model, d_model)
 
-    z = None
-    
-    for i in range(0, heads): 
-        z = self_attention(attn_weights, residual, verbose)
-
-        # TODO: concatenate Zs
+    z = self_attention(attn_weights, residual, verbose)
 
     # Join residual and attention outputs
     residual = add(residual, z, verbose)
