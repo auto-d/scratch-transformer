@@ -26,7 +26,7 @@ def tokenize(a, verbose):
     log_if(f" → One string of {len(a)} characters tokenized", verbose) 
 
     literals = [x for x in zip(ids[0:5], tokenizer.convert_ids_to_tokens(ids[0:5]))]
-    log_if(f" → Resulting sequence is {len(ids)} tokens (first five ids/tokens: {ids[0:5]})", verbose)
+    log_if(f" → Resulting sequence is {len(ids)} tokens (first five ids/tokens: {literals[0:5]})", verbose)
 
     return ids
 
@@ -41,13 +41,12 @@ def embed(ids, verbose):
     Leverage pre-trained word embeddings to map our tokens into a high-D space
     """
 
-    # TODO: this is going to have to be a tensor I suppose, uis this actually doing a forward pass vs a lookup?
     model = AutoModel.from_pretrained("google-bert/bert-base-uncased")
     embeddings = model.get_input_embeddings()
-    sequence = [embeddings(x) for x in ids]
+    sequence = [embeddings.weight.H[:,x] for x in ids]
 
-    log_if(f" → Embedded {len(ids)}")
-    log_if(f" → New sequence is size {len(sequence)}, {len(embeddings.weight[0])}")
+    log_if(f" → Embedded {len(ids)}", verbose)
+    log_if(f" → New sequence is size {len(sequence)}, {len(embeddings.weight[0])}", verbose)
 
     return sequence
 
