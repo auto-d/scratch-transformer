@@ -1,5 +1,6 @@
 import numpy as np 
 import argparse
+import torch 
 from transformers import AutoTokenizer, AutoModel
 
 def log_if(s, condition): 
@@ -43,12 +44,12 @@ def embed(ids, verbose):
 
     model = AutoModel.from_pretrained("google-bert/bert-base-uncased")
     embeddings = model.get_input_embeddings()
-    sequence = [embeddings.weight.H[:,x] for x in ids]
+    sequence = [embeddings.weight.H[:,x].detach().numpy().copy() for x in ids]
 
     log_if(f" → Embedded {len(ids)}", verbose)
     log_if(f" → New sequence is size {len(sequence)}, {len(embeddings.weight[0])}", verbose)
 
-    return sequence
+    return np.array(sequence)
 
 def unembed(a, verbose): 
     """
@@ -64,9 +65,25 @@ def add(a, b, verbose):
 def encode_position(a, verbose):
     """
     Encode the order of each element and add it to the respective token representation
-    in the sequence
+    in the sequence (which must be a numpy array)
     """
-    pass
+    
+    # Load the BERT model and leverage its fixed positional encodings, note this 
+    # has a limit 512 encodings by default, which our toy shouldn't exceed
+    if len(a) > 512: 
+        raise ValueError("Input sequence exceeds positional encoding vector size!")
+
+    model = AutoModel.from_pretrained("google-bert/bert-base-uncased")
+
+    # Extract a suitable number of encodings and add to our source vector, 
+    # detaching from the pytorch graph to avoid any gradient baggage
+    ix = torch.tensor(range(0, len(a)), dtype=torch.int32)
+    position = model.embeddings.position_embeddings(ix)
+    position = position.detach().numpy().copy()
+
+    log_if(f" → Adding absolute positional encoding ({position.shape}) to sequence ({a.shape}) ", verbose)
+
+    return a + position 
 
 def self_attention(a, verbose): 
     """
