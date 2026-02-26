@@ -41,7 +41,6 @@ def detokenize(id, verbose):
     log_if(f" ▶ Mapping ID {id} back to token...", verbose) 
     tokenizer = AutoTokenizer.from_pretrained(bert_model_string, local_files_only=True) 
     token = tokenizer.decode(id) 
-    log_if(f"  → Resulting token is {token}", verbose)
 
     return token 
 
@@ -136,7 +135,7 @@ def self_attention(weights, r, verbose, Q=0, K=1, V=2):
 
     # Mask all attention to the right of the query token. 
     # NOTE: Triu syntax to build our triangle causality mask courtesy of ChatGPT5.3
-    mask = np.triu(np.ones((a.shape[0],a.shape[0])), k=0)
+    mask = np.triu(np.ones((a.shape[0],a.shape[0])), k=1) * -np.inf
     a = a * mask.T
     log_if(f"  → Masked out attention scores on future tokens", verbose)
 
@@ -244,12 +243,12 @@ def forward(ids, vocab_size, verbose=False):
     # Second skip connection - add the attention residual to the MLP output and normalize
     residual = rms_norm(residual + fc_residual, verbose)
 
-    # Unembedding/projection to vocabulary 
+    # We take the hidden state of the last token in the sequence and project up into vocabulary
+    # space to get our logits. 
     # - Regardless of how many transformer blocks we have elected to stack (here just one), we
     #   must project from the residual stream (d = d_model) to the token vocabulary 
-    # - This is purely a linear projection vocab space
     vocab_projection = np.random.rand(d_model, vocab_size)
-    logits = np.matmul(residual, vocab_projection)
+    logits = np.matmul(residual[-1], vocab_projection).reshape(1,-1)
 
     # Armed with a pile of logits, we compress the associated scalars into the [0,1] range which 
     # will herd the resulting values toward real token probabilities that are chasing our loss 
