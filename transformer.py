@@ -128,15 +128,14 @@ def self_attention(weights, r, verbose, Q=0, K=1, V=2):
     s = np.matmul(q, k.T) 
     log_if(f"  → Computed raw attention scores on q,k - s@{s.shape}", verbose)
     
-    # Now softmax those scores to give us a normalized factor (actually a probability 
+    # Now softmax those scores to give us a normalized score (actually a probability 
     # simplex - all values sum to 1) that preserves relative order and is also trivially
     # differentiable. Scale the dot product scalars by the square root of the head 
-    # size to avoid large positive or negative inputs that push softmax to the 
-    
+    # size to avoid large positive or negative inputs that push softmax to the     
     log_if(f"  → Scale by √d_head ...", verbose)
     a = softmax(s/d_k)
 
-    # Mask all attention to the right of the query token. 
+    # Mask all attention to the right of the query token.
     # NOTE: Triu syntax to build our triangle causality mask courtesy of ChatGPT5.3
     mask = np.triu(np.ones((a.shape[0],a.shape[0])), k=1)
     mask * -np.inf
@@ -235,17 +234,18 @@ def forward(ids, vocab_size, verbose=False):
     z = self_attention(attn_weights, residual, verbose)
 
     # Model our skip connection, adding residual stream and attention outputs, 
-    # before normalizing to a fixed scale w/ RMSNorm.
-    residual = rms_norm(residual + z, verbose)
+    # before normalizing to a fixed scale w/ RMSNorm to help stabilize activations across
+    # long training runs. 
+    attn_residual = rms_norm(residual + z, verbose)
 
     # Initialize a random set of weights to stand in for trained weights in our 
     # fully-connected layers, then pass the residual stream for each token through
     fc_weights = [np.random.rand(d_model, d_model*4)]
     fc_weights.append(np.random.rand(d_model*4, d_model))
-    fc_residual = fc(residual, fc_weights, verbose)
+    fc_residual = fc(attn_residual, fc_weights, verbose)
     
     # Second skip connection - add the attention residual to the MLP output and normalize
-    residual = rms_norm(residual + fc_residual, verbose)
+    residual = rms_norm(attn_residual + fc_residual, verbose)
 
     # We take the hidden state of the last token in the sequence and project up into vocabulary
     # space to get our logits. 
@@ -271,7 +271,7 @@ def main():
     parser.add_argument("text", type=str, help="An input string to process")
     args = parser.parse_args()   
 
-    log_if(f"Starting transformer emulator on sequence '{args.text[0:10]}' ...", args.verbose)
+    log_if(f"Starting decoder-only transformer emulator on sequence '{args.text[0:10]}' ...", args.verbose)
 
     ids, vocab_size = tokenize(args.text, args.verbose)   
     probs = forward(ids, vocab_size, args.verbose) 
