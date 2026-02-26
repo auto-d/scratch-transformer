@@ -32,13 +32,18 @@ def tokenize(a, verbose):
     literals = [x for x in zip(ids[0:5], tokenizer.convert_ids_to_tokens(ids[0:5]))]
     log_if(f"  → Resulting sequence is {len(ids)} tokens (first five ids/tokens: {literals[0:5]})", verbose)
 
-    return ids
+    return ids, len(tokenizer._vocab)
 
-def detokenize(a, verbose): 
+def detokenize(id, verbose): 
     """
     Map from an integer value back to a token 
     """
-    pass 
+    log_if(f" ▶ Mapping ID {id} back to token...", verbose) 
+    tokenizer = AutoTokenizer.from_pretrained(bert_model_string, local_files_only=True) 
+    token = tokenizer.decode(id) 
+    log_if(f"  → Resulting token is {token}", verbose)
+
+    return token 
 
 def embed(ids, verbose): 
     """
@@ -120,12 +125,6 @@ def self_attention(weights, r, verbose, Q=0, K=1, V=2):
     # (square matrix). So (n, d_k) * (n, d_k).T = (n,n)
     s = np.matmul(q, k.T) 
     log_if(f"  → Computed raw attention scores on q,k - s@{s.shape}", verbose)
-
-    # Mask all attention to the right of the query token. 
-    # NOTE: Triu syntax to build our triangle causality mask courtesy of ChatGPT5.3
-    mask = np.triu(np.ones((s.shape[0],s.shape[0])), k=0)
-    s = s * mask.T
-    log_if(f"  → Masked out attention scores on future tokens", verbose)
     
     # Now softmax those scores to give us a normalized factor (actually a probability 
     # simplex - all values sum to 1) that preserves relative order and is also trivially
@@ -135,10 +134,16 @@ def self_attention(weights, r, verbose, Q=0, K=1, V=2):
     log_if(f"  → Scale by √d_head ...", verbose)
     a = softmax(s/d_k)
 
+    # Mask all attention to the right of the query token. 
+    # NOTE: Triu syntax to build our triangle causality mask courtesy of ChatGPT5.3
+    mask = np.triu(np.ones((a.shape[0],a.shape[0])), k=0)
+    a = a * mask.T
+    log_if(f"  → Masked out attention scores on future tokens", verbose)
+
     # Scale our v vector, amplifying or suppressing by the corresponding score,  then 
     # add the results to get our new residual stream z
     log_if(f"  → Scaling v@{v.shape} by attention scores...", verbose)
-    z = v * a
+    z = np.matmul(a, v)
     log_if(f"  → Attention head output  z@{z.shape}", verbose)
 
     return z 
@@ -178,9 +183,22 @@ def rms_norm(a, verbose):
     return rmsnorm
 
 def fc(a, weights, verbose=True): 
-    pass 
+    """
+    Apply the provided array of weight matrices to a provided residual
+    """    
+    log_if(f" ▶ Applying fully connected layers to residual matrix r@{a.shape}", verbose)
+    log_if(f"  → Projecting r@{a.shape} through FC layer one@{weights[0].shape}", verbose)  
+    x = np.matmul(a, weights[0])
+    
+    log_if(f"  → Applying ReLU activation to r@{a.shape}", verbose)
+    x = np.maximum(0, x)
 
-def forward(ids, verbose=False):
+    log_if(f"  → Projecting a@{a.shape} through FC layer two @{weights[1].shape}", verbose)    
+    x = np.matmul(x, weights[1])
+    
+    return x 
+
+def forward(ids, vocab_size, verbose=False):
     """
     Forward pass of our toy transformer
     
@@ -219,7 +237,8 @@ def forward(ids, verbose=False):
 
     # Initialize a random set of weights to stand in for trained weights in our 
     # fully-connected layers, then pass the residual stream for each token through
-    fc_weights = np.random.rand(d_model, d_model*4, d_model)
+    fc_weights = [np.random.rand(d_model, d_model*4)]
+    fc_weights.append(np.random.rand(d_model*4, d_model))
     fc_residual = fc(residual, fc_weights, verbose)
     
     # Second skip connection - add the attention residual to the MLP output and normalize
@@ -227,9 +246,10 @@ def forward(ids, verbose=False):
 
     # Unembedding/projection to vocabulary 
     # - Regardless of how many transformer blocks we have elected to stack (here just one), we
-    #   must project from the residual stream (d = d_model) to the model's vocabulary. 
-    # - We implement above projection with a shallow linear layer and no fancy activations 
-    logits = unembed(residual, verbose) 
+    #   must project from the residual stream (d = d_model) to the token vocabulary 
+    # - This is purely a linear projection vocab space
+    vocab_projection = np.random.rand(d_model, vocab_size)
+    logits = np.matmul(residual, vocab_projection)
 
     # Armed with a pile of logits, we compress the associated scalars into the [0,1] range which 
     # will herd the resulting values toward real token probabilities that are chasing our loss 
@@ -250,8 +270,8 @@ def main():
 
     log_if(f"Starting transformer emulator on sequence '{args.text[0:10]}' ...", args.verbose)
 
-    ids = tokenize(args.text, args.verbose)   
-    probs = forward(ids, args.verbose) 
+    ids, vocab_size = tokenize(args.text, args.verbose)   
+    probs = forward(ids, vocab_size, args.verbose) 
     
     # Greedily grab the highest probability token and report it 
     # Note: This is where we could introduce important features like... 
