@@ -1,8 +1,10 @@
 # Toy transformer w/ excessive logging to help explore underlying mechanisms. 
-# NOTE: Support from https://jalammar.github.io/illustrated-transformer/ on 
-# architecture. Support frm chatGPT5.3 for syntax (called out where applicable) 
+# NOTE: Support from https://jalammar.github.io/illustrated-transformer/ and 
+# https://transformerwalkthrough-production.up.railway.app/ on architecture. Support 
+# from chatGPT5.3 for syntax (called out where applicable) 
 # and Q&A on transformer fundamental concepts (e.g. layernorm, positional encoding, ...)
 
+import time 
 import os 
 import logging
 import numpy as np 
@@ -17,6 +19,7 @@ bert_model_string = "google-bert/bert-base-uncased"
 
 def log_if(s, condition): 
     if condition: 
+        time.sleep(0.1)
         print(s)
 
 def tokenize(a, verbose): 
@@ -135,7 +138,8 @@ def self_attention(weights, r, verbose, Q=0, K=1, V=2):
 
     # Mask all attention to the right of the query token. 
     # NOTE: Triu syntax to build our triangle causality mask courtesy of ChatGPT5.3
-    mask = np.triu(np.ones((a.shape[0],a.shape[0])), k=1) * -np.inf
+    mask = np.triu(np.ones((a.shape[0],a.shape[0])), k=1)
+    mask * -np.inf
     a = a * mask.T
     log_if(f"  → Masked out attention scores on future tokens", verbose)
 
@@ -246,8 +250,9 @@ def forward(ids, vocab_size, verbose=False):
     # We take the hidden state of the last token in the sequence and project up into vocabulary
     # space to get our logits. 
     # - Regardless of how many transformer blocks we have elected to stack (here just one), we
-    #   must project from the residual stream (d = d_model) to the token vocabulary 
+    #   must project from the residual stream (d = d_model) to the token vocabulary     
     vocab_projection = np.random.rand(d_model, vocab_size)
+    log_if(f" ▶ Projecting final sequence residual up to vocab @{vocab_projection.shape}", verbose)
     logits = np.matmul(residual[-1], vocab_projection).reshape(1,-1)
 
     # Armed with a pile of logits, we compress the associated scalars into the [0,1] range which 
@@ -263,7 +268,6 @@ def main():
     """
     parser = argparse.ArgumentParser(description="Toy implementation of a transformer architecture.")     
     parser.add_argument("--verbose", action="store_true", default=True, help="Log all operations to aid understanding")
-    parser.add_argument("--dimension", type=int, default=16, help="Model dimension")
     parser.add_argument("text", type=str, help="An input string to process")
     args = parser.parse_args()   
 
@@ -282,7 +286,7 @@ def main():
     # - Beam search : we would have to roll out multiple tokens through associated forward passes and then 
     #   pick the higher cumulative probability path
     next_token = detokenize(np.argmax(probs), args.verbose) 
-    print(next_token)
+    print(f"  → Predicted token {next_token}\n")
 
 if __name__ == "__main__":
     main() 
